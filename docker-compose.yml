@@ -1,0 +1,51 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets the app reach an Ollama installed on your PC
+    environment:
+      CORPUS_DIR: ${CORPUS_DIR:-./data/corpus}
+      MANIFEST_PATH: ${MANIFEST_PATH:-./data/manifest.json}
+      DB_PATH: ${DB_PATH:-./data/veltrix.db}
+      APP_TODAY: ${APP_TODAY:-}
+      # ---- paid LLM (used first when its key is set) ----
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_MODEL: ${LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      # ---- free fallbacks (used when no paid key is set) ----
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+      OLLAMA_TIMEOUT_S: ${OLLAMA_TIMEOUT_S:-28}
+      LLM_MAX_ATTEMPTS: ${LLM_MAX_ATTEMPTS:-2}
+      LLM_TIMEOUT_S: ${LLM_TIMEOUT_S:-12}
+      # ---- retrieval: local open-source embeddings, no key ----
+      EMBEDDINGS: ${EMBEDDINGS:-fastembed}
+      CORPUS_TOKEN_BUDGET: ${CORPUS_TOKEN_BUDGET:-2800}
+      LOG_FILE: ${LOG_FILE:-./logs/app.log}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+
+  # Optional fully-local open-source LLM. Only starts with:  docker compose --profile local-llm up
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+
+volumes:
+  ollama_models:

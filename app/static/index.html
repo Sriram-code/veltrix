@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Veltrix Test UI</title>
+<style>
+body { font-family: Segoe UI, Arial; margin: 0; background: #f3f4f8; }
+header { background: #2b3a67; color: #fff; padding: 10px 16px; }
+header input { width: 90px; }
+#log { max-width: 850px; margin: 10px auto; height: 70vh; overflow-y: auto; }
+.m { padding: 10px; margin: 8px; border-radius: 10px; white-space: pre-wrap; }
+.u { background: #2b3a67; color: #fff; margin-left: 20%; }
+.b { background: #fff; margin-right: 20%; }
+.r { color: #c0392b; font-weight: bold; }
+form { max-width: 850px; margin: auto; display: flex; gap: 6px; }
+#msg { flex: 1; padding: 10px; }
+</style>
+</head>
+<body>
+<header>
+Employee ID: <input id="emp" value="E1001">
+Session: <span id="sid"></span>
+<button onclick="newS()">New session</button>
+</header>
+<div id="log"></div>
+<form onsubmit="go(event)">
+<input id="msg" placeholder="Ask an HR question">
+<button>Send</button>
+</form>
+<script>
+let sid = "";
+
+function newS() {
+  sid = "ui-" + Date.now();
+  document.getElementById("sid").textContent = sid;
+  document.getElementById("log").innerHTML = "";
+}
+
+function add(cls, text) {
+  const d = document.createElement("div");
+  d.className = "m " + cls;
+  d.textContent = text;
+  document.getElementById("log").appendChild(d);
+  d.scrollIntoView();
+}
+
+async function go(e) {
+  e.preventDefault();
+  const box = document.getElementById("msg");
+  const text = box.value.trim();
+  if (!text) return;
+  box.value = "";
+  add("u", text);
+  const res = await fetch("/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Employee-Id": document.getElementById("emp").value.trim()
+    },
+    body: JSON.stringify({ session_id: sid, message: text })
+  });
+  const data = await res.json();
+  if (res.status !== 200) {
+    add("b r", "HTTP " + res.status + ": " + data.error);
+    return;
+  }
+  let out = "[" + data.route + "] " + data.answer;
+  for (const c of data.citations) {
+    out += "\nSource: " + c.doc_id + " - " + c.locator;
+  }
+  for (const t of data.tool_calls) {
+    out += "\nTool: " + t.name + " " + JSON.stringify(t.args) + " -> " + t.status;
+  }
+  if (data.pending_confirmation) {
+    out += "\n(Type yes to confirm)";
+  }
+  add("b", out);
+}
+
+document.getElementById("emp").onchange = newS;
+newS();
+</script>
+</body>
+</html>
