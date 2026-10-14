@@ -9,5 +9,6 @@ pytesseract>=0.3.10
 pillow>=10.0
 numpy>=1.26
 tiktoken>=0.7
-fastembed>=0.3
+fastembed>=0.5
+qdrant-client>=1.10
 pytest>=8.0

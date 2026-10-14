@@ -13,8 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Bake the tokenizer and the open-source CPU embedding model into the image (no downloads at startup).
 RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" \
- && python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/opt/cache/fastembed').embed(['warm up']))"
-
+ && python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/opt/cache/fastembed').embed(['warm up']))"  
 COPY app ./app
 COPY tests ./tests
 COPY scripts ./scripts

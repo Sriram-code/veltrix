@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,17 @@ class KnowledgeBase:
     index: HybridIndex | None = None
     holiday_count: int = 0
     failed: list[str] = field(default_factory=list)
+    corpus_hash: str = ""
+
+def corpus_fingerprint(corpus: Path, manifest: Path) -> str:
+    """Hash of the manifest and every corpus file. Changes whenever
+    the data changes, so cached answers are never reused."""
+    h = hashlib.sha256(manifest.read_bytes())
+    for p in sorted(corpus.rglob("*")):
+        if p.is_file():
+            h.update(p.name.encode())
+            h.update(p.read_bytes())
+    return h.hexdigest()[:16]
 
 
 def ingest(corpus_dir: str | None = None, manifest_path: str | None = None, db_path: str | None = None,
@@ -55,6 +67,8 @@ def ingest(corpus_dir: str | None = None, manifest_path: str | None = None, db_p
         c.chunk_id = f"C{i}"
     db.replace_holidays(holiday_rows, db_path)
     kb.holiday_count = len(holiday_rows)
+    kb.corpus_hash = corpus_fingerprint(
+    corpus, Path(manifest_path or settings.manifest_path))
     dense = settings.embeddings == "fastembed" if use_dense is None else use_dense
     kb.index = HybridIndex(kb.chunks, {d: m.title for d, m in kb.docs.items()}, dense, settings.embed_model)
     log("ingest_done", docs=len(kb.docs), chunks=len(kb.chunks), holidays=len(holiday_rows), failed=kb.failed,

@@ -10,6 +10,7 @@ from datetime import date
 from app.config import HARD_CORPUS_TOKEN_LIMIT, settings
 from app.ingestion.pipeline import KnowledgeBase
 from app.retrieval import precedence as P
+from app import trace
 from app.retrieval.tokens import count_tokens
 
 
@@ -88,14 +89,35 @@ def build_context(kb, role, region, ref, query, budget=None,
         per_doc[c.doc_id] = per_doc.get(c.doc_id, 0) + 1
         n_up += up
         used += t
+
     rendered = _render(kb, chosen)
     total = count_tokens(rendered)
     while total > HARD_CORPUS_TOKEN_LIMIT and chosen:
         chosen.pop()
         rendered = _render(kb, chosen)
         total = count_tokens(rendered)
+
     notes = precedence_notes(kb, chosen, ref)
+    trace.step(
+        "retrieval",
+        query=query[:200],
+        reference_date=str(ref),
+        search=kb.index.describe() if kb.index else "none",
+        docs_allowed=len({kb.chunks[i].doc_id for i in allowed}),
+        chunks_allowed=len(allowed),
+        top_hits=[{"doc_id": kb.chunks[i].doc_id,
+                   "locator": kb.chunks[i].locator,
+                   "score": round(sc, 4)} for i, sc in hits[:10]],
+        selected=[{"sid": s.sid, "doc_id": s.doc_id,
+                   "locator": s.locator, "upcoming": s.upcoming,
+                   "tokens": count_tokens(s.text)} for s in chosen],
+        corpus_tokens=total,
+        budget=budget,
+        hard_limit=HARD_CORPUS_TOKEN_LIMIT,
+        precedence=notes,
+    )
     return Context(chosen, rendered, total, notes)
+
 
 def precedence_notes(kb: KnowledgeBase, chosen: list[Source], ref: date) -> str:
     """Precedence ordering computed in code (metadata only, no corpus text)."""

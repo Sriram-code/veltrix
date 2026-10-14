@@ -19,6 +19,9 @@ import httpx
 
 from app.config import HARD_CORPUS_TOKEN_LIMIT, settings
 from app.logging_setup import log
+from app import trace
+from app.retrieval.tokens import count_tokens
+
 
 DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
@@ -71,6 +74,38 @@ def resolve_chain(explicit: str | None = None, ollama_ok: bool | None = None) ->
         ollama_ok = _ollama_reachable()
     return [p for p in order if (ollama_ok if p == "ollama" else bool(_key(p)))]
 
+_usage = threading.local()
+
+
+def _read_usage(data):
+    """Token usage reported by the provider, if any."""
+    if not isinstance(data, dict):
+        return None
+    u = data.get("usage") or data.get("usageMetadata") or {}
+    i = (u.get("prompt_tokens") or u.get("input_tokens")
+         or u.get("promptTokenCount") or data.get("prompt_eval_count"))
+    o = (u.get("completion_tokens") or u.get("output_tokens")
+         or u.get("candidatesTokenCount") or data.get("eval_count"))
+    if i is None and o is None:
+        return None
+    return {"in": i or 0, "out": o or 0}
+
+
+def _record(provider, model, purpose, corpus_tokens,
+            system, user, raw, t0, ok):
+    """Send one LLM call to the live monitor."""
+    u = getattr(_usage, "last", None) or {}
+    est_in = count_tokens(system + user)
+    trace.llm_call(
+        purpose=purpose, provider=provider, model=model, ok=ok,
+        ms=int((time.time() - t0) * 1000),
+        corpus_tokens=corpus_tokens,
+        system_tokens=count_tokens(system),
+        input_tokens=u.get("in") or est_in,
+        output_tokens=u.get("out") or (count_tokens(raw) if raw else 0),
+        usage_source="provider" if u else "tiktoken estimate",
+        output_preview=(raw or "")[:600],
+    )
 
 def _parse_json(text: str) -> dict:
     m = re.search(r"\{.*\}", (text or "").strip(), re.S)
@@ -110,8 +145,12 @@ class LLMClient:
         last: Exception | None = None
         for provider in self.chain[: max(1, self.max_attempts)]:
             t0, ok = time.time(), False
+            raw = ""
+            _usage.last = None
             try:
-                out = _parse_json(getattr(self, f"_{provider}")(system, user, self.model_for(provider)))
+                raw = getattr(self, f"_{provider}")(
+                    system, user, self.model_for(provider))
+                out = _parse_json(raw)
                 ok = True
                 return out
             except Exception as e:  # fall through to the next provider
@@ -120,6 +159,8 @@ class LLMClient:
                 log("llm_call", request_id=request_id, purpose=purpose, provider=provider,
                     model=self.model_for(provider), corpus_tokens=corpus_tokens, ok=ok,
                     ms=int((time.time() - t0) * 1000))
+                _record(provider, self.model_for(provider), purpose,
+                        corpus_tokens, system, user, raw, t0, ok)
         raise LLMError(f"all providers failed: {type(last).__name__}")
 
     # ---------------------------------------------------------------- transport
@@ -127,7 +168,10 @@ class LLMClient:
         r = httpx.post(url, headers=headers, json=body, timeout=timeout or settings.llm_timeout_s)
         if r.status_code >= 400:
             raise LLMError(f"{provider} HTTP {r.status_code}")
-        return r.json()
+        
+        data = r.json()
+        _usage.last = _read_usage(data)
+        return data
 
     def _openai_compatible(self, provider, base, system, user, model):
         data = self._post(provider, f"{base}/chat/completions", {"Authorization": f"Bearer {_key(provider)}"},

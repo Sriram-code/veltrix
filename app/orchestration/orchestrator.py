@@ -1,14 +1,16 @@
-"""Turn handling: guards -> confirmation -> planning -> tools -> retrieval -> answer -> route."""
+"""Turn handling: guards -> exact cache -> confirmation -> planning -> tools -> retrieval -> answer -> route."""
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
-from app import db
+from app import db, trace
+from app import cache as C
 from app.ingestion.pipeline import KnowledgeBase
 from app.llm.prompts import ANSWER_SYSTEM, PLANNER_SYSTEM
 from app.logging_setup import log
@@ -42,6 +44,20 @@ _EMP_ID = re.compile(r"^[A-Za-z]{1,3}\d{2,}$")
 _SOURCE_REF = re.compile(
     r"\s*[\(\[]\s*[SH]\d+(?:\s*,\s*[SH]\d+)*\s*[\)\]]"
 )
+# Follow-up style messages depend on conversation history, so they must never be cached.
+_FOLLOWUP = re.compile(r"^\s*(and|also|what about|how about|why|then|so)\b", re.I)
+
+# Messages that look like they need personal data or an action: before the planner,
+# only an exact cache match is allowed for these.
+_PERSONAL = re.compile(
+    r"\b(balance|remaining|left|requests?|apply|applied|cancel\w*|team|employee|reports?|"
+    r"pending|approved|booked)\b"
+    r"|\bmy\s+(leave|leaves|days|manager|team|requests?|balance)\b"
+    r"|\bhow many\b.*\b(have|taken|used)\b", re.I)
+
+def _cacheable(message: str) -> bool:
+    """Short or follow-up messages depend on history -> skip the cache (lookup and store)."""
+    return len(message.split()) >= 4 and not _FOLLOWUP.match(message)
 
 
 @dataclass
@@ -61,14 +77,77 @@ def _lt(v) -> Optional[str]:
 class Orchestrator:
     def __init__(self, kb: KnowledgeBase, llm, today_fn, db_path: Optional[str] = None):
         self.kb, self.llm, self.today_fn, self.db_path = kb, llm, today_fn, db_path
+        self.cache = C.AnswerCache(embed_fn=self._make_embed_fn())
+        models = []
+        for p in getattr(llm, "chain", None) or []:
+            models.append(p + ":" + llm.model_for(p))
+        self.version = hashlib.sha256(
+            (PLANNER_SYSTEM + ANSWER_SYSTEM + ",".join(models)).encode()
+        ).hexdigest()[:12]
+
+    def _make_embed_fn(self):
+        """Reuse the local bge-small model (if loaded) for meaning match."""
+        idx = getattr(self.kb, "index", None)
+        emb = getattr(idx, "embedder", None)
+        if emb is None:
+            return None
+
+        def embed(text):
+            vec = next(iter(emb.query_embed([text])))
+            return [float(x) for x in vec]
+        return embed
+
+    # ------------------------------------------------------------------ cache
+    def _cache_partition(self, ctx):
+        """Partition depends only on what is known BEFORE the planner runs."""
+        r = ctx.requester
+        return C.make_partition(
+            role=r.role, region=r.region, today=ctx.today, ref_date=ctx.today,
+            holiday=False,
+            corpus_hash=getattr(self.kb, "corpus_hash", ""),
+            version=self.version,
+        )
+
+    def _try_cache(self, part, message, rid, pre_planner=False) -> Optional[Turn]:
+        personal = bool(_PERSONAL.search(message))
+        hit, info = self.cache.lookup(
+            part, message,
+            exact_only=pre_planner and personal,
+            min_meaning=C.PREPLAN_SEMANTIC_MIN if pre_planner else None,
+            count_miss=not pre_planner)
+        if hit is None:
+            if not pre_planner:
+                trace.step("cache", detail="MISS: answer will be generated and stored")
+            return None
+        note = "HIT (" + info["match"] + " match"
+        if info.get("score") is not None:
+            note += ", score " + str(info["score"])
+        note += ")"
+        if info.get("cached_question"):
+            note += ' - reused answer to: "' + info["cached_question"] + '"'
+        note += (". Planner, retrieval and answer LLM calls skipped (0 LLM calls)." if pre_planner
+                 else ". Retrieval and the answer LLM call were skipped (0 corpus tokens).")
+        if info["match"] in ("spelling", "meaning"):
+            self.cache.store(part, message, {
+                "answer": hit["answer"],
+                "citations": [dict(c) for c in hit["citations"]]})
+            note += " This wording was saved as an alias."
+        trace.step("cache", detail=note)
+        log("cache_hit", request_id=rid, match=info["match"])
+        return Turn(hit["answer"], "rag", citations=[dict(c) for c in hit["citations"]])
 
     # ------------------------------------------------------------------ entry
     def handle(self, session: Session, requester: db.Employee, message: str) -> dict:
         rid = str(uuid.uuid4())
+        trace.start(rid, requester.employee_id, requester.role,
+                    requester.region, message)
         ctx = T.ToolContext(requester, self.today_fn(), list(self.kb.docs.values()), self.db_path)
         with session.lock:
             turn = self._finalise(self._turn(session, ctx, message, rid))
             session.history = (session.history + [(message[:500], turn.answer[:500])])[-4:]
+        trace.step("response", citations=turn.citations,
+                   answer=turn.answer[:300])
+        trace.finish(turn.route)
         log("chat_turn", request_id=rid, employee_id=requester.employee_id, route=turn.route,
             tools=[t["name"] + ":" + t["status"] for t in turn.tool_calls], citations=len(turn.citations))
         return {"request_id": rid, "answer": turn.answer, "route": turn.route, "citations": turn.citations,
@@ -77,11 +156,21 @@ class Orchestrator:
     # ------------------------------------------------------------------ main logic
     def _turn(self, session: Session, ctx: T.ToolContext, message: str, rid: str) -> Turn:
         if _INJECTION.search(message):
+            trace.step("guard", detail="Blocked by manipulation "
+                       "check before any LLM call")
             session.pending = None
             return Turn(REFUSE_MANIPULATION, "refuse")
         if session.pending and _CONFIRM.match(message):  # step 2 of a write
             prop, session.pending = session.pending, None
             return self._execute(ctx, prop)
+
+        # Stage 1: exact-match cache BEFORE the planner (saves the first LLM call).
+        part = self._cache_partition(ctx)
+        use_cache = _cacheable(message)
+        if use_cache and session.pending is None:
+            hit = self._try_cache(part, message, rid, pre_planner=True)
+            if hit:
+                return hit
 
         plan = self._plan(session, ctx, message, rid)
         session.pending = None  # any other message discards the proposal
@@ -115,14 +204,30 @@ class Orchestrator:
             return Turn(REFUSE_OFF_TOPIC, "refuse")
 
         ref = self._reference_date(plan, ctx.today)
-        status, answer, cites = self._answer_from_docs(ctx, ref, (plan.get("search_query") or "") + " " + message,
-                                                       message, results, plan, rid)
+
+        # Stage 2: full matching (typo + meaning) now that the planner confirmed
+        # this is a document-only question. Only document-only answers are cached.
+        if use_cache and not results:
+            hit = self._try_cache(part, message, rid)
+            if hit:
+                return hit
+
+        status, answer, cites = self._answer_from_docs(
+            ctx, ref, (plan.get("search_query") or "") + " " + message,
+            message, results, plan, rid)
         if status == "no_answer" or not cites:
             if results:
-                return Turn(self._render_reads(ctx, results) + "\n\nThe HR documents don't cover the rest of your "
-                            "question; please contact the HR team.", "tool", tool_calls=tool_calls)
+                return Turn(self._render_reads(ctx, results)
+                            + "\n\nThe HR documents don't cover the rest "
+                            "of your question; please contact the HR "
+                            "team.", "tool", tool_calls=tool_calls)
             return Turn(NO_ANSWER, "no_answer")
-        return Turn(answer, "hybrid" if results else "rag", citations=cites, tool_calls=tool_calls)
+        if use_cache and not results and status in ("answered", "partial"):
+            self.cache.store(part, message,
+                             {"answer": answer,
+                              "citations": [dict(c) for c in cites]})
+        return Turn(answer, "hybrid" if results else "rag",
+                    citations=cites, tool_calls=tool_calls)
 
     # ------------------------------------------------------------------ planning
     def _plan(self, session: Session, ctx: T.ToolContext, message: str, rid: str) -> dict:
@@ -144,6 +249,15 @@ class Orchestrator:
             for a in plan.get("actions") or []:
                 if isinstance(a, dict) and a.get("tool") in ("apply_leave", "get_team_leave"):
                     a["start_date"], a["end_date"], a["date_problem"] = nw[0].isoformat(), nw[1].isoformat(), None
+        # FIX: runs once, after the loop (it was inside the loop before)
+        trace.step(
+            "plan",
+            category=plan.get("category", "hr"),
+            needs_documents=bool(plan.get("needs_documents")),
+            actions=[a.get("tool") for a in plan.get("actions") or []
+                     if isinstance(a, dict)],
+            search_query=plan.get("search_query") or "",
+        )
         return plan
 
     @staticmethod
@@ -303,8 +417,10 @@ class Orchestrator:
             if sid in smap and smap[sid] not in seen:  # only ids we sent -> never a restricted doc
                 seen.add(smap[sid])
                 cites.append({"doc_id": smap[sid][0], "locator": smap[sid][1]})
-                answer = _SOURCE_REF.sub("", str(out.get("answer", "")))
-                return out.get("status", "answered"), answer, cites
+        # FIX: these two lines were inside the loop before (returned after the first source,
+        # and returned None when used_sources was empty)
+        answer = _SOURCE_REF.sub("", str(out.get("answer", "")))
+        return out.get("status", "answered"), answer, cites
 
     def _holiday_records(self, ctx, ref: date):
         r = ctx.requester
@@ -347,7 +463,10 @@ class Orchestrator:
 
     @staticmethod
     def _tc(r: T.ToolResult) -> dict:
-        return {"name": r.name, "args": scrub(r.args), "status": r.status}
+        tc = {"name": r.name, "args": scrub(r.args), "status": r.status}
+        trace.step("tool", tool=r.name, args=tc["args"],
+                   status=r.status, error=r.error)
+        return tc
 
     @staticmethod
     def _finalise(t: Turn) -> Turn:

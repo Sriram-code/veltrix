@@ -1,83 +1,554 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Veltrix Test UI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veltrix Assistant + Live Monitor</title>
 <style>
-body { font-family: Segoe UI, Arial; margin: 0; background: #f3f4f8; }
-header { background: #2b3a67; color: #fff; padding: 10px 16px; }
-header input { width: 90px; }
-#log { max-width: 850px; margin: 10px auto; height: 70vh; overflow-y: auto; }
-.m { padding: 10px; margin: 8px; border-radius: 10px; white-space: pre-wrap; }
-.u { background: #2b3a67; color: #fff; margin-left: 20%; }
-.b { background: #fff; margin-right: 20%; }
-.r { color: #c0392b; font-weight: bold; }
-form { max-width: 850px; margin: auto; display: flex; gap: 6px; }
-#msg { flex: 1; padding: 10px; }
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --soft: #f1f3f7;
+  --ink: #1c2430;
+  --muted: #667085;
+  --line: #e4e7ec;
+  --brand: #243b6b;
+  --accent: #2563eb;
+  --good: #16794a;   --good-bg: #e7f5ed;
+  --warn: #a15c07;   --warn-bg: #fef3e2;
+  --bad: #b42318;    --bad-bg: #fdeceb;
+  --tool: #6d3fc0;   --tool-bg: #f0eafb;
+  --info: #1d4ed8;   --info-bg: #e8effd;
+  --grey: #475467;   --grey-bg: #eceff3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b;
+    --panel: #1a1f28;
+    --soft: #232a35;
+    --ink: #e6e9ef;
+    --muted: #98a2b3;
+    --line: #2d3542;
+    --brand: #1b2a4d;
+    --accent: #6c9bff;
+    --good: #5ed39a;   --good-bg: #16301f;
+    --warn: #f2b155;   --warn-bg: #33270f;
+    --bad: #ff8f85;    --bad-bg: #3a1a18;
+    --tool: #c3a5ff;   --tool-bg: #2a2040;
+    --info: #8fb0ff;   --info-bg: #1b2744;
+    --grey: #b4bccb;   --grey-bg: #2a313d;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.5 "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; }
+
+/* ---------- header ---------- */
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 20px;
+  background: var(--brand);
+  color: #fff;
+}
+.brand { font-size: 16px; font-weight: 600; margin-right: auto; }
+.field { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.field input {
+  width: 96px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  font: inherit;
+}
+.sess { font-size: 12px; opacity: .8; }
+.btn-ghost {
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, .45);
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+}
+.btn-ghost:hover { background: rgba(255, 255, 255, .14); }
+
+/* ---------- layout ---------- */
+main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+}
+.panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.panel-title {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 600;
+}
+.panel-title small { margin-left: 8px; font-weight: 400; color: var(--muted); font-size: 12px; }
+.scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px; }
+
+/* ---------- chat ---------- */
+#log { display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 86%; padding: 10px 14px; border-radius: 12px; word-wrap: break-word; }
+.msg.u { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.msg.b { align-self: flex-start; background: var(--soft); border-bottom-left-radius: 4px; cursor: pointer; border: 2px solid transparent; }
+.msg.b:hover { border-color: var(--line); }
+.msg.b.sel { border-color: var(--accent); }
+.msg.err { align-self: flex-start; background: var(--bad-bg); color: var(--bad); }
+.msg.wait { align-self: flex-start; background: var(--soft); color: var(--muted); font-style: italic; }
+.ans { white-space: pre-wrap; margin-top: 6px; }
+.meta { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip {
+  display: inline-flex; gap: 6px; align-items: baseline;
+  padding: 2px 9px; border-radius: 6px;
+  background: var(--panel); border: 1px solid var(--line);
+  font-size: 12px;
+}
+.chip b { font-weight: 600; }
+.chip span { color: var(--muted); }
+.toolline { margin-top: 8px; font-size: 12px; color: var(--muted); word-break: break-word; }
+.toolline b { color: var(--ink); }
+.confirm-row { margin-top: 10px; display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.btn-confirm {
+  padding: 5px 12px; border: 0; border-radius: 6px;
+  background: var(--accent); color: #fff; font-weight: 600;
+}
+.btn-confirm:hover { filter: brightness(1.1); }
+
+.empty { margin: auto; max-width: 420px; text-align: center; padding: 24px 0; }
+.empty h2 { margin: 0 0 6px; font-size: 18px; }
+.empty p { margin: 0 0 16px; color: var(--muted); }
+.suggest { display: flex; flex-direction: column; gap: 8px; }
+.suggest button {
+  padding: 9px 14px; text-align: left;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--ink);
+}
+.suggest button:hover { border-color: var(--accent); background: var(--soft); }
+
+.composer { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.composer input {
+  flex: 1; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--ink); font: inherit;
+}
+.composer input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.composer button {
+  padding: 0 20px; border: 0; border-radius: 8px;
+  background: var(--accent); color: #fff; font-weight: 600;
+}
+.composer button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- pills ---------- */
+.pill {
+  display: inline-block; padding: 1px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap;
+}
+.p-rag { background: var(--info-bg); color: var(--info); }
+.p-tool { background: var(--tool-bg); color: var(--tool); }
+.p-hybrid { background: var(--tool-bg); color: var(--tool); }
+.p-clarify { background: var(--warn-bg); color: var(--warn); }
+.p-refuse { background: var(--bad-bg); color: var(--bad); }
+.p-no_answer { background: var(--grey-bg); color: var(--grey); }
+.p-good { background: var(--good-bg); color: var(--good); }
+.p-warn { background: var(--warn-bg); color: var(--warn); }
+.p-bad { background: var(--bad-bg); color: var(--bad); }
+.p-grey { background: var(--grey-bg); color: var(--grey); }
+
+/* ---------- monitor ---------- */
+.mon h3 { margin: 22px 0 10px; font-size: 14px; font-weight: 600; }
+.mon h3:first-child { margin-top: 0; }
+.muted { color: var(--muted); }
+.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.kpi-item { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.kpi-item span { display: block; font-size: 12px; color: var(--muted); }
+.kpi-item b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.who { margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+.banner {
+  margin-top: 12px; padding: 10px 14px; border-radius: 8px;
+  background: var(--good-bg); color: var(--good); font-weight: 600;
+}
+
+.steps { list-style: none; margin: 0; padding: 0 0 0 24px; position: relative; }
+.steps::before { content: ""; position: absolute; left: 7px; top: 8px; bottom: 8px; width: 2px; background: var(--line); }
+.step { position: relative; padding: 0 0 16px; }
+.step:last-child { padding-bottom: 0; }
+.step::before {
+  content: ""; position: absolute; left: -24px; top: 4px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--grey); border: 3px solid var(--panel);
+}
+.step[data-step="guard"]::before { background: var(--bad); }
+.step[data-step="plan"]::before { background: var(--info); }
+.step[data-step="cache"]::before { background: var(--good); }
+.step[data-step="retrieval"]::before { background: #0e7490; }
+.step[data-step="tool"]::before { background: var(--tool); }
+.step[data-step="response"]::before { background: var(--grey); }
+.step-head { display: flex; align-items: center; gap: 8px; }
+.step-name { font-weight: 600; }
+.step-time { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.step-body { margin-top: 4px; font-size: 13px; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 2px 10px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; word-break: break-word; }
+
+.bar { height: 10px; background: var(--grey-bg); border-radius: 5px; overflow: hidden; margin: 4px 0 2px; }
+.fill { height: 100%; background: var(--accent); }
+.fill.warn { background: #e67e22; }
+.bar-label { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+details { margin-top: 6px; }
+summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+table { border-collapse: collapse; width: 100%; margin-top: 6px; font-size: 12.5px; }
+th, td { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+pre { white-space: pre-wrap; background: var(--soft); padding: 8px; border-radius: 6px; margin: 6px 0 0; font-size: 12px; }
+
+.llm { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.llm-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.llm-head .step-time { margin-left: auto; }
+
+/* ---------- small screens ---------- */
+@media (max-width: 900px) {
+  body { height: auto; }
+  html, body { height: auto; }
+  main { grid-template-columns: 1fr; }
+  .panel { min-height: 70vh; }
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
 <header>
-Employee ID: <input id="emp" value="E1001">
-Session: <span id="sid"></span>
-<button onclick="newS()">New session</button>
+  <span class="brand">Veltrix Assistant</span>
+  <label class="field">Employee ID <input id="emp" value="E2004"></label>
+  <span class="sess">Session: <span id="sid"></span></span>
+  <button class="btn-ghost" type="button" onclick="newS()">New session</button>
 </header>
-<div id="log"></div>
-<form onsubmit="go(event)">
-<input id="msg" placeholder="Ask an HR question">
-<button>Send</button>
-</form>
+
+<main>
+  <section class="panel">
+    <div class="panel-title">Chat <small>Click an answer to see how it was produced</small></div>
+    <div class="scroll"><div id="log"></div></div>
+    <form class="composer" onsubmit="go(event)">
+      <input id="msg" placeholder="Ask an HR question" autocomplete="off" aria-label="Your message">
+      <button id="send">Send</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-title">Live monitor</div>
+    <div class="scroll mon" id="mon"></div>
+  </section>
+</main>
+
 <script>
 let sid = "";
+let busy = false;
+let session = { calls: 0, corpus: 0, input: 0, output: 0 };
+
+const SUGGESTIONS = [
+  "What is the hybrid work policy?",
+  "How many annual leave days do I have left?",
+  "Which public holidays do we have this year?"
+];
+const ROUTE_LABEL = {
+  rag: "Policy documents", tool: "Leave system", hybrid: "Documents + leave system",
+  clarify: "Needs more detail", refuse: "Declined", no_answer: "Not covered"
+};
+const STEP_LABEL = {
+  guard: "Safety check", plan: "Planner", cache: "Cache",
+  retrieval: "Document search", tool: "Tool call", response: "Response"
+};
+
+function $(id) { return document.getElementById(id); }
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function pill(cls, text) { return '<span class="pill ' + cls + '">' + esc(text) + "</span>"; }
+
+/* ---------- chat ---------- */
+function clearEmpty() { const e = $("log").querySelector(".empty"); if (e) e.remove(); }
+
+function showEmpty() {
+  const d = document.createElement("div");
+  d.className = "empty";
+  d.innerHTML = "<h2>Ask about HR policy or your leave</h2>" +
+    "<p>I can answer from Veltrix documents, check balances and requests, and apply or cancel leave.</p>";
+  const box = document.createElement("div");
+  box.className = "suggest";
+  for (const s of SUGGESTIONS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = s;
+    b.onclick = () => sendText(s);
+    box.appendChild(b);
+  }
+  d.appendChild(box);
+  $("log").appendChild(d);
+}
+
+function addNode(cls) {
+  clearEmpty();
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  $("log").appendChild(d);
+  return d;
+}
+function scrollEnd(el) { el.scrollIntoView({ block: "end", behavior: "smooth" }); }
+
+function addUser(text) { const d = addNode("u"); d.textContent = text; scrollEnd(d); return d; }
+function addError(text) { const d = addNode("err"); d.textContent = text; scrollEnd(d); return d; }
+function addWait() { const d = addNode("wait"); d.textContent = "Thinking..."; scrollEnd(d); return d; }
+
+function addBot(data) {
+  const d = addNode("b");
+  let h = pill("p-" + data.route, ROUTE_LABEL[data.route] || data.route);
+  h += '<div class="ans">' + esc(data.answer) + "</div>";
+  if (data.citations && data.citations.length) {
+    h += '<div class="meta">';
+    for (const c of data.citations)
+      h += '<span class="chip"><b>' + esc(c.doc_id) + "</b><span>" + esc(c.locator) + "</span></span>";
+    h += "</div>";
+  }
+  for (const t of data.tool_calls || [])
+    h += '<div class="toolline"><b>' + esc(t.name) + "</b> " + esc(JSON.stringify(t.args)) +
+      " " + pill(t.status === "success" ? "p-good" : "p-bad", t.status) + "</div>";
+  d.innerHTML = h;
+  if (data.pending_confirmation) {
+    const row = document.createElement("div");
+    row.className = "confirm-row";
+    row.innerHTML = "<span>Waiting for your confirmation.</span>";
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn-confirm";
+    b.textContent = "Yes, confirm";
+    b.onclick = (ev) => { ev.stopPropagation(); sendText("yes"); };
+    row.appendChild(b);
+    d.appendChild(row);
+  }
+  scrollEnd(d);
+  return d;
+}
 
 function newS() {
   sid = "ui-" + Date.now();
-  document.getElementById("sid").textContent = sid;
-  document.getElementById("log").innerHTML = "";
+  $("sid").textContent = sid;
+  $("log").innerHTML = "";
+  showEmpty();
+  session = { calls: 0, corpus: 0, input: 0, output: 0 };
+  $("mon").innerHTML = "<h3>Live monitor</h3><p class='muted'>Send a message to see the steps behind each answer.</p>";
 }
 
-function add(cls, text) {
-  const d = document.createElement("div");
-  d.className = "m " + cls;
-  d.textContent = text;
-  document.getElementById("log").appendChild(d);
-  d.scrollIntoView();
+function go(e) { e.preventDefault(); sendText($("msg").value); }
+
+async function sendText(raw) {
+  const text = (raw || "").trim();
+  if (!text || busy) return;
+  busy = true;
+  $("send").disabled = true;
+  $("msg").value = "";
+  addUser(text);
+  const wait = addWait();
+  $("mon").innerHTML = "<h3>Live monitor</h3><p class='muted'>Working...</p>";
+  const emp = $("emp").value.trim();
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Employee-Id": emp },
+      body: JSON.stringify({ session_id: sid, message: text })
+    });
+    const data = await res.json();
+    wait.remove();
+    if (res.status !== 200) {
+      addError("HTTP " + res.status + ": " + (data.error || "Request failed"));
+      $("mon").innerHTML = "<h3>Live monitor</h3><p class='muted'>No trace for this request.</p>";
+      return;
+    }
+    const bubble = addBot(data);
+    const t = await loadTrace(data.request_id, emp);
+    if (t && t.totals) {
+      session.calls += t.totals.llm_calls;
+      session.corpus += t.totals.corpus_tokens;
+      session.input += t.totals.input_tokens;
+      session.output += t.totals.output_tokens;
+    }
+    bubble.onclick = () => show(t, bubble);
+    show(t, bubble);
+  } catch (err) {
+    wait.remove();
+    addError("Could not reach the server. Check that it is running and try again.");
+    $("mon").innerHTML = "<h3>Live monitor</h3><p class='muted'>No trace.</p>";
+  } finally {
+    busy = false;
+    $("send").disabled = false;
+    $("msg").focus();
+  }
 }
 
-async function go(e) {
-  e.preventDefault();
-  const box = document.getElementById("msg");
-  const text = box.value.trim();
-  if (!text) return;
-  box.value = "";
-  add("u", text);
-  const res = await fetch("/chat", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Employee-Id": document.getElementById("emp").value.trim()
-    },
-    body: JSON.stringify({ session_id: sid, message: text })
-  });
-  const data = await res.json();
-  if (res.status !== 200) {
-    add("b r", "HTTP " + res.status + ": " + data.error);
-    return;
-  }
-  let out = "[" + data.route + "] " + data.answer;
-  for (const c of data.citations) {
-    out += "\nSource: " + c.doc_id + " - " + c.locator;
-  }
-  for (const t of data.tool_calls) {
-    out += "\nTool: " + t.name + " " + JSON.stringify(t.args) + " -> " + t.status;
-  }
-  if (data.pending_confirmation) {
-    out += "\n(Type yes to confirm)";
-  }
-  add("b", out);
+async function loadTrace(rid, emp) {
+  try {
+    const r = await fetch("/debug/trace/" + rid, { headers: { "X-Employee-Id": emp } });
+    return r.status === 200 ? await r.json() : null;
+  } catch (e) { return null; }
 }
 
-document.getElementById("emp").onchange = newS;
+/* ---------- monitor ---------- */
+function bar(value, max) {
+  const pct = Math.min(100, Math.round(100 * value / max));
+  const cls = pct > 90 ? "fill warn" : "fill";
+  return '<div class="bar"><div class="' + cls + '" style="width:' + pct + '%"></div></div>' +
+    '<div class="bar-label">' + value + " / " + max + " (" + pct + "%)</div>";
+}
+
+function kpi(label, value) {
+  return '<div class="kpi-item"><span>' + label + "</span><b>" + value + "</b></div>";
+}
+
+function show(t, bubble) {
+  document.querySelectorAll(".msg.b.sel").forEach(x => x.classList.remove("sel"));
+  if (bubble) bubble.classList.add("sel");
+  const m = $("mon");
+  if (!t) { m.innerHTML = "<h3>Live monitor</h3><p class='muted'>No trace.</p>"; return; }
+  const tot = t.totals || {};
+  const steps = t.steps || [];
+  const calls = t.llm_calls || [];
+
+  let h = "<h3>This answer</h3>";
+  h += '<div class="kpis">' +
+    kpi("Route", esc(ROUTE_LABEL[t.route] || t.route)) +
+    kpi("Time", t.total_ms + " ms") +
+    kpi("LLM calls", tot.llm_calls || 0) +
+    kpi("Corpus tokens", tot.corpus_tokens || 0) +
+    kpi("Input tokens", tot.input_tokens || 0) +
+    kpi("Output tokens", tot.output_tokens || 0) + "</div>";
+  h += '<p class="who">Requester ' + esc(t.employee_id) + ", role " + esc(t.role) +
+    ", region " + esc(t.region) + "</p>";
+
+  if (!(tot.llm_calls > 0)) {
+    const cacheHit = steps.some(s => s.name === "cache" && /^HIT/.test(s.detail || ""));
+    h += '<div class="banner">' + (cacheHit
+      ? "Answered from cache. No LLM calls and no tokens used."
+      : "Handled by code. No LLM calls were needed.") + "</div>";
+  }
+
+  h += "<h3>Pipeline steps</h3>";
+  h += '<ol class="steps">' + steps.map(stepHtml).join("") + "</ol>";
+
+  h += "<h3>LLM calls</h3>";
+  if (!calls.length)
+    h += "<p class='muted'>None. This answer was produced by code, a confirmation or the cache.</p>";
+  for (const c of calls) {
+    h += '<div class="llm"><div class="llm-head">' +
+      pill(c.ok ? "p-good" : "p-bad", c.ok ? "OK" : "Failed") +
+      "<b>" + esc(c.purpose) + "</b>" +
+      '<span class="muted">' + esc(c.provider) + " / " + esc(c.model) + "</span>" +
+      '<span class="step-time">' + c.ms + " ms</span></div>" +
+      "<table>" +
+      "<tr><td>Corpus tokens (3,000 limit)</td><td>" + bar(c.corpus_tokens, 3000) + "</td></tr>" +
+      '<tr><td>System prompt tokens</td><td class="num">' + c.system_tokens + "</td></tr>" +
+      '<tr><td>Input tokens</td><td class="num">' + c.input_tokens + "</td></tr>" +
+      '<tr><td>Output tokens</td><td class="num">' + c.output_tokens + "</td></tr>" +
+      '<tr><td>Token source</td><td class="num">' + esc(c.usage_source) + "</td></tr>" +
+      "</table>";
+    if (c.output_preview)
+      h += "<details><summary>LLM output</summary><pre>" + esc(c.output_preview) + "</pre></details>";
+    h += "</div>";
+  }
+
+  h += "<h3>Session totals</h3>";
+  h += '<div class="kpis" style="grid-template-columns:repeat(4,1fr)">' +
+    kpi("LLM calls", session.calls) + kpi("Corpus", session.corpus) +
+    kpi("Input", session.input) + kpi("Output", session.output) + "</div>";
+  m.innerHTML = h;
+}
+
+function row(k, v) { return "<dt>" + k + "</dt><dd>" + v + "</dd>"; }
+
+function stepHtml(s) {
+  let head = '<div class="step-head"><span class="step-name" title="' + esc(s.name) + '">' +
+    esc(STEP_LABEL[s.name] || s.name) + "</span>";
+  let body = "";
+
+  if (s.name === "plan") {
+    body = '<dl class="kv">' +
+      row("Category", "<b>" + esc(s.category) + "</b>") +
+      row("Needs documents", s.needs_documents ? "yes" : "no") +
+      row("Actions", esc((s.actions || []).join(", ") || "none")) +
+      (s.search_query ? row("Search query", esc(s.search_query)) : "") + "</dl>";
+  } else if (s.name === "cache") {
+    const d = s.detail || "";
+    if (/^HIT/.test(d)) head += pill("p-good", "Hit");
+    else if (/^MISS/.test(d)) head += pill("p-warn", "Miss");
+    body = esc(d);
+  } else if (s.name === "retrieval") {
+    body = '<dl class="kv">' +
+      row("Search", esc(s.search)) +
+      row("Reference date", esc(s.reference_date)) +
+      row("Searched", s.docs_allowed + " documents (" + s.chunks_allowed + " chunks)") +
+      "</dl><div style='margin-top:8px'>Context sent to the LLM (target " + s.budget + " tokens)</div>" +
+      bar(s.corpus_tokens, s.hard_limit);
+    body += "<details open><summary>Selected passages (" + s.selected.length + ")</summary><table>" +
+      '<tr><th>#</th><th>Document</th><th>Section</th><th class="num">Tokens</th></tr>';
+    for (const x of s.selected)
+      body += "<tr><td>" + esc(x.sid) + "</td><td>" + esc(x.doc_id) +
+        (x.upcoming ? " " + pill("p-grey", "upcoming") : "") +
+        "</td><td>" + esc(x.locator) + '</td><td class="num">' + x.tokens + "</td></tr>";
+    body += "</table></details>";
+    body += "<details><summary>Top search hits</summary><table>" +
+      '<tr><th>Document</th><th>Section</th><th class="num">Score</th></tr>';
+    for (const x of s.top_hits)
+      body += "<tr><td>" + esc(x.doc_id) + "</td><td>" + esc(x.locator) +
+        '</td><td class="num">' + x.score + "</td></tr>";
+    body += "</table></details>";
+    if (s.precedence)
+      body += "<details><summary>Precedence ranking</summary><pre>" + esc(s.precedence) + "</pre></details>";
+  } else if (s.name === "tool") {
+    head += pill(s.status === "success" ? "p-good" : "p-bad", s.status);
+    body = "<b>" + esc(s.tool) + "</b> " + esc(JSON.stringify(s.args)) +
+      (s.error ? "<br><span class='muted'>Reason: " + esc(s.error) + "</span>" : "");
+  } else if (s.name === "response") {
+    const cs = (s.citations || []).map(c => c.doc_id + " (" + c.locator + ")").join("; ");
+    body = "Citations: " + esc(cs || "none");
+  } else {
+    body = esc(s.detail || "");
+  }
+
+  head += '<span class="step-time">' + s.at_ms + " ms</span></div>";
+  return '<li class="step" data-step="' + esc(s.name) + '">' + head +
+    '<div class="step-body">' + body + "</div></li>";
+}
+
+$("emp").onchange = newS;
 newS();
 </script>
 </body>

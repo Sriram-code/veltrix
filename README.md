@@ -103,6 +103,17 @@ flowchart LR
 The code is split into **ingestion** (`app/ingestion`), **retrieval** (`app/retrieval`), **orchestration**
 (`app/orchestration`, `app/llm`), **tools** (`app/tools`) and **data access** (`app/db.py`).
 
+## Live monitor (demo feature)
+
+The test page at http://localhost:8000 has a side panel that shows,
+for each message: the planner's decision, the passages retrieved and
+sent to the LLM with their token counts against the 3,000 limit, the
+precedence ranking, tool calls, and input/output tokens and time for
+every LLM call. It reads GET /debug/trace/{request_id}, which returns
+a trace only to the employee who sent the request. Traces are kept
+in memory (last 100) and never written to logs. Set TRACE_ENABLED=0
+to turn it off. /chat and /health are unchanged.
+
 ## Assumptions
 
 1. **Reference date.** If the question names a past year, the reference date is 31 December of that year. A future
@@ -170,3 +181,7 @@ The code is split into **ingestion** (`app/ingestion`), **retrieval** (`app/retr
   model; the precedence rules and citations stay the same.
 - Groq's free tier has rate limits; rapid testing can return
   temporary errors.
+
+## Evaluation
+| `scripts/run_eval.py --retrieval` | Recall, MRR, leaks and tokens for retrieval (no LLM) |
+| `scripts/run_eval.py --e2e` | Routes, citations, facts, leaks and latency against the running service |

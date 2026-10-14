@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from app import db
+from app import trace
 from app.config import settings
 from app.ingestion.pipeline import ingest
 from app.llm.client import LLMClient
@@ -61,6 +62,21 @@ def health():
     if state.ready:
         return {"status": "ok"}
     return JSONResponse({"status": "starting"}, status_code=503)
+
+@app.get("/debug/trace/{request_id}", include_in_schema=False)
+def get_trace(request_id: str, request: Request):
+    """Monitor panel only. Not part of the API contract."""
+    emp = (request.headers.get("X-Employee-Id") or "").strip()
+    t = trace.get(request_id, emp) if emp else None
+    if t is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return t
+
+
+@app.get("/debug/traces", include_in_schema=False)
+def list_traces(request: Request):
+    emp = (request.headers.get("X-Employee-Id") or "").strip()
+    return trace.recent(emp) if emp else []
 
 
 def _valid_body(body) -> bool:
