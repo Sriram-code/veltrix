@@ -48,6 +48,7 @@ _STOP = set(
 def tokenize(text: str) -> list[str]:
     return [t for t in _TOKEN.findall(text.lower()) if t not in _STOP]
 
+
 class BM25:
     def __init__(self, docs, k1=1.4, b=0.75):
         self.k1, self.b = k1, b
@@ -183,7 +184,6 @@ class HybridIndex:
             )
             for r in rows
         ]
-        titles: dict[str, str] = {}  # locator already baked into text
 
         obj = cls.__new__(cls)
         obj.chunks = chunks
@@ -238,36 +238,6 @@ class HybridIndex:
             parts.append("rerank (" + RERANK_MODEL.split("/")[-1] + ")")
         return " + ".join(parts)
 
-
-# ---------------------------------------------------------------------------
-# Thin query embedder wrapper for the pgvector path
-# (embeds only the QUERY at search time – no model loaded at startup)
-# ---------------------------------------------------------------------------
-
-class _PgQueryEmbedder:
-    """Lazy-loads the embedding model ONLY when the first query arrives.
-    On a RAM-constrained server with EMBEDDINGS=none this is never called
-    (PgVectorStore does server-side cosine search); it is here as a safety
-    net in case NumpyPgStore (BYTEA fallback) is used instead.
-    """
-
-    def __init__(self, conn_factory):
-        self._conn_factory = conn_factory
-        self._model = None
-
-    def _get_model(self):
-        if self._model is None:
-            from fastembed import TextEmbedding
-            model_name = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
-            self._model = TextEmbedding(
-                model_name=model_name,
-                cache_dir=os.getenv("FASTEMBED_CACHE_PATH"),
-            )
-        return self._model
-
-    def query_embed(self, texts):
-        return self._get_model().query_embed(texts)
-
     def _dense(self, query, allowed, limit):
         import numpy as np
 
@@ -312,3 +282,33 @@ class _PgQueryEmbedder:
             ranked = [t for t in ranked if t[1] >= RERANK_MIN_SCORE]
             rest = []
         return ranked + rest
+
+
+# ---------------------------------------------------------------------------
+# Thin query embedder wrapper for the pgvector path
+# (embeds only the QUERY at search time – no model loaded at startup)
+# ---------------------------------------------------------------------------
+
+class _PgQueryEmbedder:
+    """Lazy-loads the embedding model ONLY when the first query arrives.
+    On a RAM-constrained server with EMBEDDINGS=none this is never called
+    (PgVectorStore does server-side cosine search); it is here as a safety
+    net in case NumpyPgStore (BYTEA fallback) is used instead.
+    """
+
+    def __init__(self, conn_factory):
+        self._conn_factory = conn_factory
+        self._model = None
+
+    def _get_model(self):
+        if self._model is None:
+            from fastembed import TextEmbedding
+            model_name = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+            self._model = TextEmbedding(
+                model_name=model_name,
+                cache_dir=os.getenv("FASTEMBED_CACHE_PATH"),
+            )
+        return self._model
+
+    def query_embed(self, texts):
+        return self._get_model().query_embed(texts)
