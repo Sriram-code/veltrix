@@ -14,7 +14,7 @@ from app.ingestion.chunker import Chunk, chunk_blocks
 from app.ingestion.holidays import extract_holidays
 from app.ingestion.parsers import parse_any
 from app.logging_setup import log
-from app.retrieval.index import HybridIndex
+from app.retrieval.index import HybridIndex, VECTOR_BACKEND
 from app.retrieval.precedence import DocMeta
 
 
@@ -92,8 +92,30 @@ def ingest(corpus_dir: str | None = None, manifest_path: str | None = None, db_p
     kb.holiday_count = len(holiday_rows)
     kb.corpus_hash = corpus_fingerprint(
         corpus, Path(manifest_path or settings.manifest_path))
-    dense = settings.embeddings == "fastembed" if use_dense is None else use_dense
-    kb.index = HybridIndex(kb.chunks, {d: m.title for d, m in kb.docs.items()}, dense, settings.embed_model)
-    log("ingest_done", docs=len(kb.docs), chunks=len(kb.chunks), holidays=len(holiday_rows), failed=kb.failed,
+
+    # ------------------------------------------------------------------ #
+    # Build the retrieval index
+    # ------------------------------------------------------------------ #
+    if VECTOR_BACKEND == "pgvector":
+        # Chunks and BM25 corpus are loaded from Postgres; no embedding model
+        # is instantiated on the server — this is the RAM-saving path.
+        log("ingest_using_pgvector_store")
+        try:
+            kb.index = HybridIndex.from_pg(conn_factory=db.connect)
+            # Overwrite chunks so that access-control in retriever.py works
+            # (chunk positions must match the index's internal chunk list)
+            kb.chunks = kb.index.chunks
+        except Exception as exc:
+            log("pgvector_load_failed_bm25_only", err=str(exc)[:300])
+            dense = settings.embeddings == "fastembed" if use_dense is None else use_dense
+            kb.index = HybridIndex(kb.chunks, {d: m.title for d, m in kb.docs.items()},
+                                   dense, settings.embed_model)
+    else:
+        dense = settings.embeddings == "fastembed" if use_dense is None else use_dense
+        kb.index = HybridIndex(kb.chunks, {d: m.title for d, m in kb.docs.items()},
+                               dense, settings.embed_model)
+
+    log("ingest_done", docs=len(kb.docs), chunks=len(kb.chunks),
+        holidays=len(holiday_rows), failed=kb.failed,
         dense=kb.index.embedder is not None, seconds=round(time.time() - t0, 1))
     return kb

@@ -81,14 +81,17 @@ services:
         value: "2"
 
       # --- Retrieval ---
+      # EMBEDDINGS=none: no embedding model loaded on the server.
+      # Vectors are pre-embedded locally via scripts/embed_to_pg.py
+      # and stored in the chunk_embeddings Postgres table.
       - key: EMBEDDINGS
-        value: fastembed
+        value: none
       - key: EMBED_MODEL
         value: BAAI/bge-small-en-v1.5
       - key: CORPUS_TOKEN_BUDGET
         value: "2800"
       - key: VECTOR_BACKEND
-        value: qdrant
+        value: pgvector
       - key: QDRANT_URL
         value: ""
       - key: QDRANT_COLLECTION

@@ -166,7 +166,77 @@ def ensure_extra_schema(db_path: Optional[str] = None) -> None:
                 ON leave_requests (employee_id, status)
         """)
 
+        # Pre-embedded chunk vectors (used when VECTOR_BACKEND=pgvector).
+        # Created in a separate helper because it needs a mid-transaction commit
+        # for the extension DDL.
+        _ensure_chunk_embeddings_ddl(cur)
+
         _seed_if_empty(cur)
+
+
+
+def _ensure_chunk_embeddings_ddl(cur) -> None:
+    """Create the chunk_embeddings table if it doesn't exist.
+
+    Tries to enable pgvector first.  If the extension is unavailable (e.g. on
+    an older Postgres instance), falls back to a BYTEA column so that
+    embed_to_pg.py can still write serialised numpy arrays.
+
+    Uses SAVEPOINTs so that a failed CREATE EXTENSION doesn't abort the
+    surrounding advisory-lock transaction.
+    """
+    # Check if already exists to avoid redundant extension attempts
+    cur.execute("""
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = 'chunk_embeddings'
+    """)
+    if cur.fetchone() is not None:
+        return  # table already exists – nothing to do
+
+    # Try pgvector using a savepoint so failure is recoverable
+    has_pgvector = False
+    try:
+        cur.execute("SAVEPOINT sp_pgvector")
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        cur.execute("RELEASE SAVEPOINT sp_pgvector")
+        has_pgvector = True
+    except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_pgvector")
+        cur.execute("RELEASE SAVEPOINT sp_pgvector")
+
+    if has_pgvector:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                chunk_id   TEXT PRIMARY KEY,
+                doc_id     TEXT NOT NULL,
+                locator    TEXT NOT NULL,
+                text       TEXT NOT NULL,
+                tokens     INTEGER NOT NULL,
+                embedding  vector(384)
+            )
+        """)
+        try:
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chunk_emb_cosine
+                    ON chunk_embeddings USING ivfflat (embedding vector_cosine_ops)
+                    WITH (lists = 10)
+            """)
+        except Exception:
+            pass  # not enough rows yet; embed_to_pg.py recreates it
+    else:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                chunk_id   TEXT PRIMARY KEY,
+                doc_id     TEXT NOT NULL,
+                locator    TEXT NOT NULL,
+                text       TEXT NOT NULL,
+                tokens     INTEGER NOT NULL,
+                embedding  BYTEA NOT NULL DEFAULT '',
+                embed_dim  INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
 
 
 def _pg_columns(cur, table: str) -> list[str]:

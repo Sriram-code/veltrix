@@ -7,9 +7,12 @@ Pipeline for one question (only over chunks the requester may read):
   4. Cross-encoder reranking of the top RERANK_TOP_N fused hits
 
 Vector store (VECTOR_BACKEND):
-  qdrant - Qdrant. Embedded in-process by default (no extra
-           container); set QDRANT_URL to use a Qdrant server.
-  numpy  - exact brute-force search in memory.
+  qdrant    - Qdrant. Embedded in-process by default (no extra
+              container); set QDRANT_URL to use a Qdrant server.
+  numpy     - exact brute-force search in memory.
+  pgvector  - pre-embedded vectors stored in Postgres (chunk_embeddings
+              table).  No embedding model is loaded on the server;
+              run scripts/embed_to_pg.py locally first.
 If Qdrant cannot start, numpy is used. If embeddings cannot load,
 search is BM25 only. If the reranker cannot load, step 4 is skipped.
 Access control: every backend searches ONLY the allowed chunk ids.
@@ -128,6 +131,12 @@ def make_store(vecs, doc_ids):
     return NumpyStore(vecs)
 
 
+def make_pg_store_from_db(rows, vecs, conn_factory):
+    """Thin wrapper so index.py doesn't import pg_store at module level."""
+    from app.retrieval.pg_store import make_pg_store
+    return make_pg_store(rows, vecs, conn_factory)
+
+
 # ------------------------------------------------------------ index
 class HybridIndex:
     def __init__(self, chunks: list[Chunk], titles: dict[str, str],
@@ -145,6 +154,50 @@ class HybridIndex:
             use_rerank = use_dense and RERANKER == "fastembed"
         if use_rerank and chunks:
             self._load_reranker()
+
+    @classmethod
+    def from_pg(cls, conn_factory, use_rerank=None) -> "HybridIndex":
+        """Build a HybridIndex whose dense store reads pre-embedded vectors
+        from the chunk_embeddings table in Postgres.
+
+        No embedding model is loaded — suitable for low-RAM deployments.
+        """
+        from app.ingestion.chunker import Chunk as _Chunk
+        from app.retrieval.pg_store import load_chunks_from_pg
+
+        logger.info("pgvector_store_loading_chunks_from_postgres")
+        rows, vecs = load_chunks_from_pg(conn_factory)
+        if not rows:
+            raise RuntimeError(
+                "chunk_embeddings table is empty. "
+                "Run 'python scripts/embed_to_pg.py' locally first."
+            )
+
+        chunks = [
+            _Chunk(
+                chunk_id=r["chunk_id"],
+                doc_id=r["doc_id"],
+                locator=r["locator"],
+                text=r["text"],
+                tokens=r["tokens"],
+            )
+            for r in rows
+        ]
+        titles: dict[str, str] = {}  # locator already baked into text
+
+        obj = cls.__new__(cls)
+        obj.chunks = chunks
+        obj.texts = [f"{r['doc_id']} - {r['locator']}\n{r['text']}" for r in rows]
+        obj.bm25 = BM25([tokenize(t) for t in obj.texts])
+        obj.embedder = _PgQueryEmbedder(conn_factory)
+        obj.store = make_pg_store_from_db(rows, vecs, conn_factory)
+        obj.reranker = None
+        if use_rerank is None:
+            use_rerank = RERANKER == "fastembed"
+        if use_rerank:
+            obj._load_reranker()
+        logger.info("pgvector_store_ready", extra={"fields": {"chunks": len(chunks)}})
+        return obj
 
     def _load_dense(self, embed_model):
         try:
@@ -184,6 +237,36 @@ class HybridIndex:
         if self.reranker is not None:
             parts.append("rerank (" + RERANK_MODEL.split("/")[-1] + ")")
         return " + ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Thin query embedder wrapper for the pgvector path
+# (embeds only the QUERY at search time – no model loaded at startup)
+# ---------------------------------------------------------------------------
+
+class _PgQueryEmbedder:
+    """Lazy-loads the embedding model ONLY when the first query arrives.
+    On a RAM-constrained server with EMBEDDINGS=none this is never called
+    (PgVectorStore does server-side cosine search); it is here as a safety
+    net in case NumpyPgStore (BYTEA fallback) is used instead.
+    """
+
+    def __init__(self, conn_factory):
+        self._conn_factory = conn_factory
+        self._model = None
+
+    def _get_model(self):
+        if self._model is None:
+            from fastembed import TextEmbedding
+            model_name = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+            self._model = TextEmbedding(
+                model_name=model_name,
+                cache_dir=os.getenv("FASTEMBED_CACHE_PATH"),
+            )
+        return self._model
+
+    def query_embed(self, texts):
+        return self._get_model().query_embed(texts)
 
     def _dense(self, query, allowed, limit):
         import numpy as np
