@@ -1,8 +1,9 @@
 """Ingestion: manifest -> parse every file -> chunks + holiday records -> index."""
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,15 +27,33 @@ class KnowledgeBase:
     failed: list[str] = field(default_factory=list)
     corpus_hash: str = ""
 
+
 def corpus_fingerprint(corpus: Path, manifest: Path) -> str:
     """Hash of the manifest and every corpus file. Changes whenever
-    the data changes, so cached answers are never reused."""
+    the data changes, so cached answers are never reused.
+    Files are streamed so large PDFs aren't loaded into memory at once."""
     h = hashlib.sha256(manifest.read_bytes())
     for p in sorted(corpus.rglob("*")):
         if p.is_file():
             h.update(p.name.encode())
-            h.update(p.read_bytes())
+            with p.open("rb") as f:
+                for block in iter(lambda: f.read(1 << 20), b""):
+                    h.update(block)
     return h.hexdigest()[:16]
+
+
+def _existing_holidays() -> dict[str, list[tuple]]:
+    """Holiday rows already in Postgres, grouped by doc_id."""
+    if os.getenv("FORCE_REINGEST") == "1":
+        return {}
+    out: dict[str, list[tuple]] = {}
+    for r in db.query(
+        "SELECT doc_id, holiday_date, name, locator, optional FROM ingested_holidays"
+    ):
+        out.setdefault(r["doc_id"], []).append(
+            (r["doc_id"], r["holiday_date"], r["name"], r["locator"], r["optional"])
+        )
+    return out
 
 
 def ingest(corpus_dir: str | None = None, manifest_path: str | None = None, db_path: str | None = None,
@@ -43,6 +62,7 @@ def ingest(corpus_dir: str | None = None, manifest_path: str | None = None, db_p
     corpus = Path(corpus_dir or settings.corpus_dir)
     manifest = json.loads(Path(manifest_path or settings.manifest_path).read_text(encoding="utf-8"))
     db.ensure_extra_schema(db_path)
+    existing = _existing_holidays()
     kb = KnowledgeBase()
     holiday_rows: list[tuple] = []
     for entry in manifest:
@@ -56,10 +76,13 @@ def ingest(corpus_dir: str | None = None, manifest_path: str | None = None, db_p
         try:
             kb.chunks.extend(chunk_blocks(meta.doc_id, parse_any(path), path.suffix.lower() == ".pdf"))
             if meta.doc_type == "calendar":
-                rows = extract_holidays(meta.doc_id, parse_any(path, merge_lines=False),
-                                        meta.effective_date.year, "US" in meta.regions)
+                rows = existing.get(meta.doc_id)
+                if rows is None:  # not in DB yet -> parse the calendar again
+                    rows = extract_holidays(meta.doc_id, parse_any(path, merge_lines=False),
+                                            meta.effective_date.year, "US" in meta.regions)
                 holiday_rows.extend(rows)
-                log("ingest_calendar", doc_id=meta.doc_id, holidays=len(rows))
+                log("ingest_calendar", doc_id=meta.doc_id, holidays=len(rows),
+                    reused=meta.doc_id in existing)
         except Exception as e:
             kb.failed.append(meta.doc_id)
             log("ingest_failed", doc_id=meta.doc_id, err=str(e)[:200])
@@ -68,7 +91,7 @@ def ingest(corpus_dir: str | None = None, manifest_path: str | None = None, db_p
     db.replace_holidays(holiday_rows, db_path)
     kb.holiday_count = len(holiday_rows)
     kb.corpus_hash = corpus_fingerprint(
-    corpus, Path(manifest_path or settings.manifest_path))
+        corpus, Path(manifest_path or settings.manifest_path))
     dense = settings.embeddings == "fastembed" if use_dense is None else use_dense
     kb.index = HybridIndex(kb.chunks, {d: m.title for d, m in kb.docs.items()}, dense, settings.embed_model)
     log("ingest_done", docs=len(kb.docs), chunks=len(kb.chunks), holidays=len(holiday_rows), failed=kb.failed,

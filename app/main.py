@@ -17,6 +17,8 @@ from app.llm.client import LLMClient
 from app.logging_setup import log, setup_logging
 from app.orchestration.orchestrator import Orchestrator
 from app.orchestration.sessions import SessionStore
+import traceback  # add to imports
+
 
 UI_FILE = Path(__file__).parent / "static" / "index.html"
 
@@ -38,7 +40,7 @@ def _run_ingestion():
         state.orchestrator = Orchestrator(kb, llm, lambda: settings.today, None)
         state.ready = True
     except Exception as e:
-        log("startup_failed", err=str(e)[:300])
+        log("startup_failed", err=str(e)[:300], tb=traceback.format_exc()[-1500:])
 
 
 @asynccontextmanager
@@ -57,11 +59,16 @@ def ui():
         return FileResponse(UI_FILE)
     return JSONResponse({"error": "UI not found"}, status_code=404)
 
-
 @app.get("/health")
 def health():
+    # Liveness only: the process is up and serving. Render uses this.
+    return {"status": "ok", "ready": state.ready}
+
+
+@app.get("/ready", include_in_schema=False)
+def ready():
     if state.ready:
-        return {"status": "ok"}
+        return {"status": "ready"}
     return JSONResponse({"status": "starting"}, status_code=503)
 
 @app.get("/debug/trace/{request_id}", include_in_schema=False)
