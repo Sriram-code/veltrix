@@ -2,8 +2,8 @@
 
 Connection string is read from the DATABASE_URL environment variable.
 All SQL uses %s placeholders (psycopg2 style).
-Existing tables are never altered; we only CREATE IF NOT EXISTS the
-`ingested_holidays` table and the relevant indexes.
+The schema is created on startup with CREATE ... IF NOT EXISTS, and the
+tables are auto-seeded from the baked-in SQLite snapshot when empty.
 """
 from __future__ import annotations
 
@@ -52,9 +52,8 @@ class Employee:
 
 
 def connect() -> psycopg2.extensions.connection:
-    """Borrow a connection from the pool. Caller must call pool.putconn(conn)."""
-    pool = _get_pool()
-    conn = pool.getconn()
+    """Borrow a connection from the pool. Caller must call _return(conn)."""
+    conn = _get_pool().getconn()
     conn.autocommit = False
     return conn
 
@@ -64,7 +63,7 @@ def _return(conn) -> None:
 
 
 @contextmanager
-def transaction() -> Iterator[psycopg2.extensions.cursor]:
+def transaction() -> Iterator[psycopg2.extras.RealDictCursor]:
     """Yield a DictCursor inside a transaction; commits on exit, rolls back on error."""
     conn = connect()
     try:
@@ -80,31 +79,78 @@ def transaction() -> Iterator[psycopg2.extensions.cursor]:
 
 @contextmanager
 def _read_cursor() -> Iterator[psycopg2.extras.RealDictCursor]:
-    """Yield a read-only cursor (no explicit transaction needed)."""
+    """Yield a cursor for read-only queries; always rolls back to end the txn."""
     conn = connect()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             yield cur
     finally:
-        _return(conn)
+        try:
+            conn.rollback()
+        finally:
+            _return(conn)
 
 
 # ---------------------------------------------------------------------------
-# Schema bootstrap
+# Schema bootstrap — runs on every startup, safe to re-run (IF NOT EXISTS)
 # ---------------------------------------------------------------------------
+
+_SCHEMA_LOCK_ID = 727274  # arbitrary constant for pg_advisory_xact_lock
+
 
 def ensure_extra_schema() -> None:
-    """Create tables / indexes that don't come from the seed SQL."""
+    """Create all tables and indexes, then seed from SQLite if empty.
+
+    Everything runs in one transaction under an advisory lock, so concurrent
+    instances starting at the same time cannot race each other.
+    """
     with transaction() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_LOCK_ID,))
+
+        # Core tables (order matters: employees before the tables that FK into it)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS ingested_holidays (
-                doc_id        TEXT NOT NULL,
-                holiday_date  TEXT NOT NULL,
-                name          TEXT,
-                locator       TEXT,
-                optional      INTEGER NOT NULL DEFAULT 0
+            CREATE TABLE IF NOT EXISTS employees (
+                employee_id TEXT PRIMARY KEY,
+                full_name   TEXT NOT NULL,
+                email       TEXT NOT NULL,
+                phone       TEXT NOT NULL,
+                region      TEXT NOT NULL,
+                join_date   TEXT NOT NULL,
+                level       TEXT NOT NULL,
+                role        TEXT NOT NULL,
+                manager_id  TEXT REFERENCES employees(employee_id)
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS leave_balances (
+                employee_id  TEXT NOT NULL REFERENCES employees(employee_id),
+                leave_type   TEXT NOT NULL,
+                balance_days REAL NOT NULL,
+                PRIMARY KEY (employee_id, leave_type)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS leave_requests (
+                request_id   TEXT PRIMARY KEY,
+                employee_id  TEXT NOT NULL REFERENCES employees(employee_id),
+                leave_type   TEXT NOT NULL,
+                start_date   TEXT NOT NULL,
+                end_date     TEXT NOT NULL,
+                working_days INTEGER NOT NULL,
+                status       TEXT NOT NULL,
+                created_at   TEXT NOT NULL
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ingested_holidays (
+                doc_id       TEXT NOT NULL,
+                holiday_date TEXT NOT NULL,
+                name         TEXT,
+                locator      TEXT,
+                optional     INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        # Indexes (after all tables exist)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_ing_hol_doc
                 ON ingested_holidays (doc_id)
@@ -114,10 +160,89 @@ def ensure_extra_schema() -> None:
                 ON leave_requests (employee_id, status)
         """)
 
+        _seed_if_empty(cur)
+
+
+def _pg_columns(cur, table: str) -> list[str]:
+    cur.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = %s "
+        "ORDER BY ordinal_position",
+        (table,),
+    )
+    return [r["column_name"] for r in cur.fetchall()]
+
+
+def _seed_if_empty(cur) -> None:
+    """If the employees table is empty, import all data from the baked-in SQLite DB.
+
+    A no-op after the first successful boot.
+    """
+    import os as _os
+    import sqlite3 as _sqlite3
+
+    cur.execute("SELECT 1 FROM employees LIMIT 1")
+    if cur.fetchone() is not None:
+        return  # already seeded
+
+    sqlite_path = _os.getenv("DB_PATH", "./data/veltrix.db")
+    if not _os.path.exists(sqlite_path):
+        return  # no SQLite snapshot available
+
+    # Parents before children so FKs are satisfied.
+    tables = ["employees", "leave_balances", "leave_requests", "ingested_holidays"]
+
+    sq = _sqlite3.connect(sqlite_path)
+    sq.row_factory = _sqlite3.Row
+    try:
+        for table in tables:
+            try:
+                rows = sq.execute(f"SELECT * FROM {table}").fetchall()
+            except _sqlite3.OperationalError:
+                continue  # table missing in SQLite — skip
+            if not rows:
+                continue
+
+            # Only copy columns that exist on both sides.
+            pg_cols = set(_pg_columns(cur, table))
+            cols = [c for c in rows[0].keys() if c in pg_cols]
+            if not cols:
+                continue
+
+            data = [tuple(r[c] for c in cols) for r in rows]
+
+            # employees.manager_id is a self-referencing FK: insert with
+            # manager_id NULL first, then fill it in once all rows exist.
+            manager_pairs: list[tuple] = []
+            if table == "employees" and "manager_id" in cols:
+                mi = cols.index("manager_id")
+                ei = cols.index("employee_id")
+                manager_pairs = [
+                    (row[mi], row[ei]) for row in data if row[mi] is not None
+                ]
+                data = [row[:mi] + (None,) + row[mi + 1:] for row in data]
+
+            col_str = "(" + ", ".join(cols) + ")"
+            psycopg2.extras.execute_values(
+                cur,
+                f"INSERT INTO {table} {col_str} VALUES %s ON CONFLICT DO NOTHING",
+                data,
+            )
+
+            if manager_pairs:
+                psycopg2.extras.execute_batch(
+                    cur,
+                    "UPDATE employees SET manager_id = %s WHERE employee_id = %s",
+                    manager_pairs,
+                )
+    finally:
+        sq.close()
+
 
 # ---------------------------------------------------------------------------
 # Employee helpers
 # ---------------------------------------------------------------------------
+
 
 _EMP_COLS = "employee_id, full_name, email, region, level, role, manager_id, join_date"
 
@@ -162,11 +287,12 @@ def all_employees(db_path: Optional[str] = None) -> list[Employee]:
 def replace_holidays(rows: list[tuple], db_path: Optional[str] = None) -> None:
     with transaction() as cur:
         cur.execute("DELETE FROM ingested_holidays")
-        psycopg2.extras.execute_values(
-            cur,
-            "INSERT INTO ingested_holidays(doc_id, holiday_date, name, locator, optional) VALUES %s",
-            rows,
-        )
+        if rows:
+            psycopg2.extras.execute_values(
+                cur,
+                "INSERT INTO ingested_holidays(doc_id, holiday_date, name, locator, optional) VALUES %s",
+                rows,
+            )
 
 
 def holidays_for_doc(doc_id: str, db_path: Optional[str] = None) -> list[dict]:
@@ -180,7 +306,7 @@ def holidays_for_doc(doc_id: str, db_path: Optional[str] = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Generic query helper used by leave_tools (accepts %s SQL directly)
+# Generic query helpers used by leave_tools (accept %s SQL directly)
 # ---------------------------------------------------------------------------
 
 def query(sql: str, params: tuple = ()) -> list[dict]:
