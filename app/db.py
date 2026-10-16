@@ -51,8 +51,11 @@ class Employee:
     # phone is deliberately never loaded
 
 
-def connect() -> psycopg2.extensions.connection:
-    """Borrow a connection from the pool. Caller must call _return(conn)."""
+def connect(db_path: Optional[str] = None) -> psycopg2.extensions.connection:
+    """Borrow a connection from the pool. Caller must call _return(conn).
+
+    db_path is kept for API compatibility but ignored.
+    """
     conn = _get_pool().getconn()
     conn.autocommit = False
     return conn
@@ -98,8 +101,11 @@ def _read_cursor() -> Iterator[psycopg2.extras.RealDictCursor]:
 _SCHEMA_LOCK_ID = 727274  # arbitrary constant for pg_advisory_xact_lock
 
 
-def ensure_extra_schema() -> None:
+def ensure_extra_schema(db_path: Optional[str] = None) -> None:
     """Create all tables and indexes, then seed from SQLite if empty.
+
+    db_path is kept for API compatibility but ignored (Postgres uses
+    DATABASE_URL).
 
     Everything runs in one transaction under an advisory lock, so concurrent
     instances starting at the same time cannot race each other.
@@ -242,7 +248,6 @@ def _seed_if_empty(cur) -> None:
 # ---------------------------------------------------------------------------
 # Employee helpers
 # ---------------------------------------------------------------------------
-
 
 _EMP_COLS = "employee_id, full_name, email, region, level, role, manager_id, join_date"
 
