@@ -3,6 +3,7 @@
 An HR assistant API for Veltrix Systems. It answers policy questions from the HR corpus with citations, applies the
 Section 5 eligibility and precedence rules, and reads and changes leave data through five permission-checked tools.
 
+
 ---
 
 ## 🚀 Deploy on Render (free tier)
@@ -145,7 +146,7 @@ a trace only to the employee who sent the request. Traces are kept
 in memory (last 100) and never written to logs. Set TRACE_ENABLED=0
 to turn it off. /chat and /health are unchanged.
 
-## Assumptions
+## Assumptions and workings
 
 1. **Reference date.** If the question names a past year, the reference date is 31 December of that year. A future
    date is never used as the reference date; future policies appear only as "upcoming changes".
