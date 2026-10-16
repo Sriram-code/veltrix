@@ -6,4 +6,4 @@ __pycache__/
 .pytest_cache/
 eval/report_*.json
 # keep the backup db out of git — the main veltrix.db is tracked
-data/veltrix_backup.db
+data/
