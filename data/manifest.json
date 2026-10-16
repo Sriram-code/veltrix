@@ -1,0 +1,333 @@
+[
+  {
+    "doc_id": "POL-LEAVE-GLOBAL-V1",
+    "file": "leave_policy_global_v1.pdf",
+    "title": "Global Leave Policy (Version 1)",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-LEAVE-GLOBAL-V2",
+    "file": "leave_policy_global_v2.pdf",
+    "title": "Global Leave Policy (Version 2)",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-04-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-LEAVE-GLOBAL-V2-SUMMARY",
+    "file": "leave_policy_v2_summary.html",
+    "title": "Global Leave Policy Version 2: At a Glance",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-04-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-LEAVE-GLOBAL-V3",
+    "file": "leave_policy_global_v3.docx",
+    "title": "Global Leave Policy (Version 3)",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2027-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "TBL-LEAVE-ACCRUAL",
+    "file": "annual_leave_accrual_schedule.pdf",
+    "title": "Annual Leave Accrual Schedule",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "ADD-LEAVE-IN",
+    "file": "leave_addendum_india.docx",
+    "title": "Leave Policy Addendum: India",
+    "doc_type": "addendum",
+    "regions": [
+      "IN"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "ADD-LEAVE-US",
+    "file": "leave_addendum_us.pdf",
+    "title": "Leave Policy Addendum: United States",
+    "doc_type": "addendum",
+    "regions": [
+      "US"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "ADD-LEAVE-DE",
+    "file": "leave_addendum_germany.pdf",
+    "title": "Leave Policy Addendum: Germany",
+    "doc_type": "addendum",
+    "regions": [
+      "DE"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "FAQ-LEAVE",
+    "file": "employee_leave_faq.html",
+    "title": "Employee Leave FAQ",
+    "doc_type": "faq",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-05-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-REMOTE-WORK",
+    "file": "remote_work_policy.docx",
+    "title": "Remote and Hybrid Work Policy",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "MEMO-HYBRID-2026",
+    "file": "memo_hybrid_work_update.pdf",
+    "title": "Memo: Update to Hybrid Work Arrangements",
+    "doc_type": "memo",
+    "regions": [
+      "IN",
+      "US"
+    ],
+    "effective_date": "2026-07-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "CAL-HOL-IN-2026",
+    "file": "holiday_calendar_india_2026.pdf",
+    "title": "Holiday Calendar 2026: India (Bengaluru)",
+    "doc_type": "calendar",
+    "regions": [
+      "IN"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "CAL-HOL-IN-2025",
+    "file": "holiday_calendar_india_2025.pdf",
+    "title": "Holiday Calendar 2025: India (Bengaluru)",
+    "doc_type": "calendar",
+    "regions": [
+      "IN"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "CAL-HOL-US-2026",
+    "file": "holiday_calendar_us_2026.html",
+    "title": "Holiday Calendar 2026: United States (Austin)",
+    "doc_type": "calendar",
+    "regions": [
+      "US"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "CAL-HOL-DE-2026",
+    "file": "holiday_calendar_germany_2026.docx",
+    "title": "Holiday Calendar 2026: Germany (Berlin)",
+    "doc_type": "calendar",
+    "regions": [
+      "DE"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-TRAVEL-EXPENSE",
+    "file": "travel_and_expense_policy.pdf",
+    "title": "Travel and Expense Policy",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "HB-FINANCE",
+    "file": "finance_handbook.docx",
+    "title": "Finance Handbook for Employees",
+    "doc_type": "handbook",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-CONDUCT",
+    "file": "code_of_conduct.pdf",
+    "title": "Code of Conduct",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2024-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-IT-SECURITY",
+    "file": "it_security_policy.md",
+    "title": "IT Security Policy",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-06-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "HB-MANAGER",
+    "file": "manager_handbook.pdf",
+    "title": "People Manager Handbook",
+    "doc_type": "handbook",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "managers"
+  },
+  {
+    "doc_id": "HR-COMP-BANDS-2026",
+    "file": "compensation_bands_2026.pdf",
+    "title": "Compensation Bands 2026",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "hr"
+  },
+  {
+    "doc_id": "HR-PIP-GUIDE",
+    "file": "performance_improvement_guidelines.docx",
+    "title": "Performance Improvement Plan Guidelines",
+    "doc_type": "handbook",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-09-01",
+    "access_level": "hr"
+  },
+  {
+    "doc_id": "WIKI-NEW-JOINERS",
+    "file": "new_joiner_tips.html",
+    "title": "Wiki: Tips for New Joiners",
+    "doc_type": "wiki",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-02-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "WIKI-LEAVE-HOWTO",
+    "file": "how_to_request_leave_wiki.html",
+    "title": "Wiki: How to Request Leave",
+    "doc_type": "wiki",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-11-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-LEARNING",
+    "file": "learning_and_development_policy.md",
+    "title": "Learning and Development Policy",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-BENEFITS-US",
+    "file": "us_benefits_summary.pdf",
+    "title": "Benefits Summary: United States",
+    "doc_type": "policy",
+    "regions": [
+      "US"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-BENEFITS-IN",
+    "file": "india_benefits_summary.md",
+    "title": "Benefits Summary: India",
+    "doc_type": "policy",
+    "regions": [
+      "IN"
+    ],
+    "effective_date": "2026-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-WORKTIME-DE",
+    "file": "working_time_policy_germany.docx",
+    "title": "Working Time Policy: Germany",
+    "doc_type": "policy",
+    "regions": [
+      "DE"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-PROBATION-NOTICE",
+    "file": "probation_and_notice_policy.pdf",
+    "title": "Probation and Notice Period Policy",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  },
+  {
+    "doc_id": "POL-HOLIDAY-WORK",
+    "file": "working_on_public_holidays.md",
+    "title": "Working on Public Holidays and Compensatory Time Off",
+    "doc_type": "policy",
+    "regions": [
+      "GLOBAL"
+    ],
+    "effective_date": "2025-01-01",
+    "access_level": "all"
+  }
+]

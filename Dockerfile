@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     TIKTOKEN_CACHE_DIR=/opt/cache/tiktoken \
     FASTEMBED_CACHE_PATH=/opt/cache/fastembed
 
-# tesseract for OCR; libpq-dev for psycopg2 (psycopg2-binary bundles libpq, but keep it for safety)
+# tesseract for OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr tesseract-ocr-eng \
         make \
@@ -25,7 +25,7 @@ COPY scripts ./scripts
 COPY Makefile pytest.ini ./
 
 # Ensure log dir exists (LOG_FILE=/tmp/app.log is used on Render)
-RUN mkdir -p /tmp logs
+RUN mkdir -p /tmp/logs logs
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

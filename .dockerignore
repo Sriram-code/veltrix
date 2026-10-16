@@ -1,6 +1,7 @@
-# data/ is intentionally NOT ignored — corpus files and veltrix.db
-# are baked into the image so the migration script can read the SQLite DB
-# and the ingestion pipeline can access the corpus without a volume mount.
+# data/ is tracked in git and intentionally included in the Docker build
+# so the corpus and veltrix.db are baked into the image.
+# Exclude only the redundant backup.
+data/veltrix_backup.db
 logs/
 .env
 .venv/
