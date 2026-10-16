@@ -1,5 +1,8 @@
 """The five leave tools. Every permission check runs HERE, using the requester resolved from the
-X-Employee-Id header (ToolContext.requester), never from LLM-chosen values."""
+X-Employee-Id header (ToolContext.requester), never from LLM-chosen values.
+
+SQL uses %s placeholders (psycopg2 / PostgreSQL style).
+"""
 from __future__ import annotations
 
 import uuid
@@ -22,7 +25,7 @@ class ToolContext:
     requester: db.Employee
     today: date
     docs: list[DocMeta]
-    db_path: Optional[str] = None
+    db_path: Optional[str] = None  # kept for API compat; ignored (uses DATABASE_URL)
 
 
 @dataclass
@@ -48,7 +51,7 @@ def can_view_employee(ctx: ToolContext, target_id: str) -> bool:
     r = ctx.requester
     if target_id == r.employee_id:
         return True
-    target = db.get_employee(target_id, ctx.db_path)
+    target = db.get_employee(target_id)
     if target is None:
         return False
     return r.role == "hr" or (r.role == "manager" and target.manager_id == r.employee_id)
@@ -61,14 +64,14 @@ def get_leave_balance(ctx: ToolContext, employee_id: str, leave_type: Optional[s
         return _perm("get_leave_balance", args)
     if leave_type and leave_type not in LEAVE_TYPES:
         return _bad("get_leave_balance", args, "Leave type must be 'annual' or 'sick'.")
-    conn = db.connect(ctx.db_path)
-    try:
-        q, p = "SELECT leave_type, balance_days FROM leave_balances WHERE employee_id = ?", [employee_id]
-        if leave_type:
-            q, p = q + " AND leave_type = ?", p + [leave_type]
-        rows = [dict(r) for r in conn.execute(q + " ORDER BY leave_type", p)]
-    finally:
-        conn.close()
+
+    sql = "SELECT leave_type, balance_days FROM leave_balances WHERE employee_id = %s"
+    params: tuple = (employee_id,)
+    if leave_type:
+        sql += " AND leave_type = %s"
+        params += (leave_type,)
+    sql += " ORDER BY leave_type"
+    rows = db.query(sql, params)
     return ToolResult("get_leave_balance", args, "success", {"employee_id": employee_id, "balances": rows})
 
 
@@ -78,16 +81,15 @@ def list_leave_requests(ctx: ToolContext, employee_id: str, status: Optional[str
         return _perm("list_leave_requests", args)
     if status and status not in STATUSES:
         return _bad("list_leave_requests", args, "Status must be pending, approved or cancelled.")
-    conn = db.connect(ctx.db_path)
-    try:
-        q = ("SELECT request_id, leave_type, start_date, end_date, working_days, status FROM leave_requests "
-             "WHERE employee_id = ?")
-        p = [employee_id]
-        if status:
-            q, p = q + " AND status = ?", p + [status]
-        rows = [dict(r) for r in conn.execute(q + " ORDER BY start_date", p)]
-    finally:
-        conn.close()
+
+    sql = ("SELECT request_id, leave_type, start_date, end_date, working_days, status "
+           "FROM leave_requests WHERE employee_id = %s")
+    params: tuple = (employee_id,)
+    if status:
+        sql += " AND status = %s"
+        params += (status,)
+    sql += " ORDER BY start_date"
+    rows = db.query(sql, params)
     return ToolResult("list_leave_requests", args, "success", {"employee_id": employee_id, "requests": rows})
 
 
@@ -102,20 +104,18 @@ def get_team_leave(ctx: ToolContext, start_date: str, end_date: str) -> ToolResu
         return _bad("get_team_leave", args, "Dates must be valid YYYY-MM-DD dates.")
     if e < s:
         return _bad("get_team_leave", args, "The end date is before the start date.")
-    reports = db.get_direct_reports(ctx.requester.employee_id, ctx.db_path)
+    reports = db.get_direct_reports(ctx.requester.employee_id)
     names = {r.employee_id: r.full_name for r in reports}
-    rows = []
+    rows: list[dict] = []
     if reports:
-        conn = db.connect(ctx.db_path)
-        try:
-            qs = ",".join("?" * len(names))
-            rows = [dict(r) for r in conn.execute(
-                f"SELECT request_id, employee_id, leave_type, start_date, end_date, working_days, status "
-                f"FROM leave_requests WHERE employee_id IN ({qs}) AND status IN ('pending','approved') "
-                f"AND start_date <= ? AND end_date >= ? ORDER BY start_date, employee_id",
-                [*names, end_date, start_date])]
-        finally:
-            conn.close()
+        placeholders = ",".join(["%s"] * len(names))
+        rows = db.query(
+            f"SELECT request_id, employee_id, leave_type, start_date, end_date, working_days, status "
+            f"FROM leave_requests WHERE employee_id IN ({placeholders}) "
+            f"AND status IN ('pending','approved') "
+            f"AND start_date <= %s AND end_date >= %s ORDER BY start_date, employee_id",
+            (*names.keys(), end_date, start_date),
+        )
     for r in rows:
         r["full_name"] = names[r["employee_id"]]  # direct reports: manager may see names
     return ToolResult("get_team_leave", args, "success", {"team_size": len(reports), "leave": rows})
@@ -143,19 +143,23 @@ def validate_apply(ctx: ToolContext, leave_type: str, start_date: str, end_date:
     wd = count_working_days(s, e, hols)
     if wd == 0:
         return _bad(n, args, "That range has no working days (only weekends and/or public holidays).")
-    conn = db.connect(ctx.db_path)
-    try:
-        bal = conn.execute("SELECT balance_days FROM leave_balances WHERE employee_id=? AND leave_type=?",
-                           (r.employee_id, leave_type)).fetchone()
-        ov = conn.execute("SELECT request_id, start_date, end_date, status FROM leave_requests WHERE employee_id=? "
-                          "AND status IN ('pending','approved') AND start_date <= ? AND end_date >= ? "
-                          "ORDER BY start_date", (r.employee_id, end_date, start_date)).fetchone()
-    finally:
-        conn.close()
-    balance = bal["balance_days"] if bal else 0.0
+
+    bal_rows = db.query(
+        "SELECT balance_days FROM leave_balances WHERE employee_id=%s AND leave_type=%s",
+        (r.employee_id, leave_type),
+    )
+    ov_rows = db.query(
+        "SELECT request_id, start_date, end_date, status FROM leave_requests "
+        "WHERE employee_id=%s AND status IN ('pending','approved') "
+        "AND start_date <= %s AND end_date >= %s ORDER BY start_date",
+        (r.employee_id, end_date, start_date),
+    )
+
+    balance = bal_rows[0]["balance_days"] if bal_rows else 0.0
     if wd > balance:
         return _bad(n, args, f"This needs {wd} working days but your {leave_type} leave balance is {balance:g} days.")
-    if ov:
+    if ov_rows:
+        ov = ov_rows[0]
         return _bad(n, args, f"It overlaps your existing {ov['status']} request {ov['request_id']} "
                              f"({ov['start_date']} to {ov['end_date']}).")
     return ToolResult(n, args, "pending_confirmation", {"working_days": wd, "balance_before": balance,
@@ -169,21 +173,32 @@ def apply_leave(ctx: ToolContext, leave_type: str, start_date: str, end_date: st
     if v.status == "error":
         return v
     wd, rid, r = v.data["working_days"], str(uuid.uuid4()), ctx.requester
-    with db.transaction(ctx.db_path) as conn:
-        bal = conn.execute("SELECT balance_days FROM leave_balances WHERE employee_id=? AND leave_type=?",
-                           (r.employee_id, leave_type)).fetchone()
-        ov = conn.execute("SELECT 1 FROM leave_requests WHERE employee_id=? AND status IN ('pending','approved') "
-                          "AND start_date <= ? AND end_date >= ?", (r.employee_id, end_date, start_date)).fetchone()
+    with db.transaction() as cur:
+        cur.execute(
+            "SELECT balance_days FROM leave_balances WHERE employee_id=%s AND leave_type=%s",
+            (r.employee_id, leave_type),
+        )
+        bal = cur.fetchone()
+        cur.execute(
+            "SELECT 1 FROM leave_requests WHERE employee_id=%s AND status IN ('pending','approved') "
+            "AND start_date <= %s AND end_date >= %s",
+            (r.employee_id, end_date, start_date),
+        )
+        ov = cur.fetchone()
         if not bal or bal["balance_days"] < wd:
             return _bad("apply_leave", args, "Your balance changed and is no longer sufficient.")
         if ov:
             return _bad("apply_leave", args, "It now overlaps an existing request.")
-        conn.execute("INSERT INTO leave_requests(request_id, employee_id, leave_type, start_date, end_date, "
-                     "working_days, status, created_at) VALUES (?,?,?,?,?,?,'pending',?)",
-                     (rid, r.employee_id, leave_type, start_date, end_date, wd,
-                      datetime.now(timezone.utc).isoformat(timespec="seconds")))
-        conn.execute("UPDATE leave_balances SET balance_days = balance_days - ? WHERE employee_id=? AND leave_type=?",
-                     (wd, r.employee_id, leave_type))
+        cur.execute(
+            "INSERT INTO leave_requests(request_id, employee_id, leave_type, start_date, end_date, "
+            "working_days, status, created_at) VALUES (%s,%s,%s,%s,%s,%s,'pending',%s)",
+            (rid, r.employee_id, leave_type, start_date, end_date, wd,
+             datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        )
+        cur.execute(
+            "UPDATE leave_balances SET balance_days = balance_days - %s WHERE employee_id=%s AND leave_type=%s",
+            (wd, r.employee_id, leave_type),
+        )
         new_bal = bal["balance_days"] - wd
     return ToolResult("apply_leave", args, "success",
                       {"request_id": rid, "working_days": wd, "status": "pending", "new_balance": new_bal})
@@ -191,21 +206,18 @@ def apply_leave(ctx: ToolContext, leave_type: str, start_date: str, end_date: st
 
 def validate_cancel(ctx: ToolContext, request_id: str) -> ToolResult:
     args = {"request_id": request_id}
-    conn = db.connect(ctx.db_path)
-    try:
-        row = conn.execute("SELECT * FROM leave_requests WHERE request_id = ?", (request_id,)).fetchone()
-    finally:
-        conn.close()
+    rows = db.query("SELECT * FROM leave_requests WHERE request_id = %s", (request_id,))
+    row = rows[0] if rows else None
     if row is None or row["employee_id"] != ctx.requester.employee_id:
         return _bad("cancel_leave", args, "I couldn't find that request among your leave requests.")
     if row["status"] not in ("pending", "approved"):
         return _bad("cancel_leave", args, f"That request is already {row['status']}.")
-    if date.fromisoformat(row["start_date"]) <= ctx.today:
+    if date.fromisoformat(str(row["start_date"])) <= ctx.today:
         return _bad("cancel_leave", args, f"Only requests that start after today can be cancelled; this one starts "
                                           f"on {row['start_date']}.")
     return ToolResult("cancel_leave", args, "pending_confirmation",
                       {k: row[k] for k in ("request_id", "leave_type", "start_date", "end_date", "working_days",
-                                           "status")})
+                                            "status")})
 
 
 def cancel_leave(ctx: ToolContext, request_id: str) -> ToolResult:
@@ -213,23 +225,26 @@ def cancel_leave(ctx: ToolContext, request_id: str) -> ToolResult:
     v = validate_cancel(ctx, request_id)
     if v.status == "error":
         return v
-    with db.transaction(ctx.db_path) as conn:
-        row = conn.execute("SELECT * FROM leave_requests WHERE request_id=? AND employee_id=? "
-                           "AND status IN ('pending','approved')", (request_id, ctx.requester.employee_id)).fetchone()
+    with db.transaction() as cur:
+        cur.execute(
+            "SELECT * FROM leave_requests WHERE request_id=%s AND employee_id=%s "
+            "AND status IN ('pending','approved')",
+            (request_id, ctx.requester.employee_id),
+        )
+        row = cur.fetchone()
         if row is None:
             return _bad("cancel_leave", args, "That request can no longer be cancelled.")
-        conn.execute("UPDATE leave_requests SET status='cancelled' WHERE request_id=?", (request_id,))
-        conn.execute("UPDATE leave_balances SET balance_days = balance_days + ? WHERE employee_id=? AND leave_type=?",
-                     (row["working_days"], row["employee_id"], row["leave_type"]))
+        cur.execute("UPDATE leave_requests SET status='cancelled' WHERE request_id=%s", (request_id,))
+        cur.execute(
+            "UPDATE leave_balances SET balance_days = balance_days + %s WHERE employee_id=%s AND leave_type=%s",
+            (row["working_days"], row["employee_id"], row["leave_type"]),
+        )
     return ToolResult("cancel_leave", args, "success", {**v.data, "status": "cancelled"})
 
 
 def cancellable_requests(ctx: ToolContext) -> list[dict]:
-    conn = db.connect(ctx.db_path)
-    try:
-        return [dict(r) for r in conn.execute(
-            "SELECT request_id, leave_type, start_date, end_date, working_days, status FROM leave_requests "
-            "WHERE employee_id=? AND status IN ('pending','approved') AND start_date > ? ORDER BY start_date",
-            (ctx.requester.employee_id, ctx.today.isoformat()))]
-    finally:
-        conn.close()
+    return db.query(
+        "SELECT request_id, leave_type, start_date, end_date, working_days, status FROM leave_requests "
+        "WHERE employee_id=%s AND status IN ('pending','approved') AND start_date > %s ORDER BY start_date",
+        (ctx.requester.employee_id, ctx.today.isoformat()),
+    )

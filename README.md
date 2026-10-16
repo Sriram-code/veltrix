@@ -3,7 +3,38 @@
 An HR assistant API for Veltrix Systems. It answers policy questions from the HR corpus with citations, applies the
 Section 5 eligibility and precedence rules, and reads and changes leave data through five permission-checked tools.
 
-## Quick start (reviewers: paid API key)
+---
+
+## 🚀 Deploy on Render (free tier)
+
+This repo ships a `render.yaml` Blueprint that provisions:
+- **Web Service** — Docker image (uvicorn + FastAPI)
+- **PostgreSQL** — Render free-tier database (auto-wired as `DATABASE_URL`)
+
+### Steps
+
+```bash
+# 1. Push this branch to GitHub / GitLab
+git push origin feature/postgres-render
+
+# 2. Open https://dashboard.render.com → New → Blueprint → connect your repo
+#    Render detects render.yaml automatically.
+
+# 3. Set your LLM key in the Render dashboard (GROQ_API_KEY is pre-selected; free tier)
+
+# 4. After the first successful deploy, open the Render Shell for the web service:
+psql $DATABASE_URL -f scripts/schema.sql        # create tables
+python scripts/migrate_sqlite_to_pg.py          # seed data from the SQLite snapshot
+
+# 5. Hit the health endpoint
+curl https://<your-app>.onrender.com/health     # {"status":"ok"}
+```
+
+> **Note:** Render free Postgres has a **90-day limit** — upgrade to Starter ($7/mo) to keep it permanently.
+
+---
+
+## Quick start (local / Docker)
 
 ```bash
 cp .env.example .env              # set LLM_PROVIDER and its key (openai | anthropic | gemini)

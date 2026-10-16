@@ -11,4 +11,5 @@ numpy>=1.26
 tiktoken>=0.7
 fastembed>=0.5
 qdrant-client>=1.10
+psycopg2-binary>=2.9
 pytest>=8.0

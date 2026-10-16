@@ -32,6 +32,7 @@ state = AppState()
 
 def _run_ingestion():
     try:
+        db.ensure_extra_schema()
         kb = ingest()
         llm = LLMClient()
         state.orchestrator = Orchestrator(kb, llm, lambda: settings.today, None)

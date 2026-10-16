@@ -34,7 +34,10 @@ def _today() -> date:
 class Settings:
     corpus_dir: str = os.getenv("CORPUS_DIR", "./data/corpus")
     manifest_path: str = os.getenv("MANIFEST_PATH", "./data/manifest.json")
+    # Legacy SQLite path kept so migration script can read the old DB.
     db_path: str = os.getenv("DB_PATH", "./data/veltrix.db")
+    # PostgreSQL connection string (required in production).
+    database_url: str = os.getenv("DATABASE_URL", "")
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai").lower()
     llm_model: str = os.getenv("LLM_MODEL", "")
     llm_timeout_s: float = float(os.getenv("LLM_TIMEOUT_S", "12"))
